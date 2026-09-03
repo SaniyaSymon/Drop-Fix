@@ -1,0 +1,178 @@
+{
+  "app_name": "DROPFIX",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A precision-engineered civic water utility platform combining clean iOS aesthetics with South Indian municipal responsiveness.",
+  "color": {
+    "surface": "#F8F9FA",
+    "onSurface": "#1A1D20",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1A1D20",
+    "surfaceTertiary": "#E9ECEF",
+    "onSurfaceTertiary": "#495057",
+    "surfaceInverse": "#111315",
+    "onSurfaceInverse": "#F8F9FA",
+    "brand": "#0EA5E9",
+    "brandPrimary": "#0284C7",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#38BDF8",
+    "onBrandSecondary": "#0F172A",
+    "brandTertiary": "#E0F2FE",
+    "onBrandTertiary": "#0369A1",
+    "success": "#10B981",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F59E0B",
+    "onWarning": "#FFFFFF",
+    "error": "#EF4444",
+    "onError": "#FFFFFF",
+    "info": "#3B82F6",
+    "onInfo": "#FFFFFF",
+    "border": "#E2E8F0",
+    "borderStrong": "#CBD5E1",
+    "divider": "#F1F5F9"
+  },
+  "typography": {
+    "displayFontFamily": "PlusJakartaSans",
+    "textFontFamily": "Inter",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical padding, structured grouped card layouts, safe-area bound bottom sticky actions.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use frosted glass headers over scrolling map and list views",
+      "Apply translucent glass sheets for action drawers and water advisories"
+    ],
+    "dont's": [
+      "Avoid glass overlays on dense data tables or small buttons",
+      "Never blur body text regions or form input containers"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "SplashOpening",
+      "purpose": "Immersive 3D water drop splash opening animation transitioning to language selector and app entry.",
+      "states": {
+        "loading": "Animating 3D water droplet surface tension ripples and logo reveal",
+        "empty": "N/A",
+        "error": "Tap to restart cinematic splash sequence"
+      },
+      "layout": "Full-bleed atmospheric brand background with centered animated droplet canvas and quick language select pills (EN, TA, TE, KN, ML)."
+    },
+    {
+      "name": "HomeDashboard",
+      "purpose": "Central civic command center displaying active water quality indexes across South Indian districts, quick action reporting, and safety alerts.",
+      "states": {
+        "loading": "Pulsing skeleton cards for water quality indices and district status list",
+        "empty": "Calm illustrated state indicating all regional water sources are stable",
+        "error": "Banner alert with retry button for failed telemetry fetch"
+      },
+      "layout": "Scrollable vertical feed with sticky glass header, District Quality Selector, Quick Voice/Camera Report Hero Banner, and Live Incident Feed."
+    },
+    {
+      "name": "ReportFlow",
+      "purpose": "Multi-step voice-assisted or manual water quality issue reporting with geo-tagging, photo evidence, and instant tracking code generation.",
+      "states": {
+        "loading": "Analyzing audio transcript and auto-extracting location tags",
+        "empty": "Prompt to record voice note or snap evidence photo",
+        "error": "Validation prompt for missing GPS coordinates or blurry photo"
+      },
+      "layout": "Step-by-step wizard with voice wave visualizer, camera preview card, category chip selector, and sticky bottom submit CTA."
+    },
+    {
+      "name": "MapExplorer",
+      "purpose": "Interactive South India public map with privacy-safe cluster markers, district filters, and live water contamination heatmaps.",
+      "states": {
+        "loading": "Map skeleton with pulsating loading ring over district boundaries",
+        "empty": "No incidents reported in selected district radius",
+        "error": "Offline map notice with cached offline tile viewer"
+      },
+      "layout": "Full-screen interactive map view with floating hybrid list/map toggle pill, bottom incident preview drawer, and top search/filter bar."
+    },
+    {
+      "name": "AuthorityConsole",
+      "purpose": "Administrative and officer operations dashboard for incident assignment, investigation notes, status updates, and resolution proof verification.",
+      "states": {
+        "loading": "Loading pending municipal incident queue",
+        "empty": "All assigned incidents resolved for current sector",
+        "error": "Server sync error with offline queue indicator"
+      },
+      "layout": "Tabbed queue (Pending, In Progress, Resolved) with swipe-to-assign officer modals, status timeline stepper, and resolution photo upload."
+    },
+    {
+      "name": "SafetyAdvisories",
+      "purpose": "Official water advisories, boil-water notices, emergency safety guides, and low-literacy visual navigator for citizens.",
+      "states": {
+        "loading": "Loading latest municipal safety broadcasts",
+        "empty": "No active advisories in your district",
+        "error": "Unable to fetch emergency bulletins"
+      },
+      "layout": "Card-based advisory feed with high-priority emergency banner at the top, expandable audio-narrated safety guides, and visual icon cards."
+    },
+    {
+      "name": "RoleSwitcherModal",
+      "purpose": "Quick demo role switcher enabling instant one-tap switching between Citizen, Municipal Officer, and Super Admin modes.",
+      "states": {
+        "loading": "Switching active session permission context",
+        "empty": "N/A",
+        "error": "Failed to update role context"
+      },
+      "layout": "Centered modal sheet with three distinct role cards (Citizen, Officer, Admin) featuring permission badges and quick test-drive descriptions."
+    }
+  ],
+  "images": {
+    "splash_backdrop": {
+      "url": "https://images.unsplash.com/photo-1548839140-29a749e1cf4d?auto=format&fit=crop&q=80&w=1200",
+      "dark": "https://images.unsplash.com/photo-1518837695005-2083093ee35b?auto=format&fit=crop&q=80&w=1200",
+      "alt": "Clean flowing water droplet and ripples"
+    },
+    "chennai_hub": {
+      "url": "https://images.unsplash.com/photo-1582510003544-4d00b7f74220?auto=format&fit=crop&q=80&w=800",
+      "alt": "Chennai reservoir and urban water point"
+    },
+    "bengaluru_hub": {
+      "url": "https://images.unsplash.com/photo-1596178065887-1198b6148b2b?auto=format&fit=crop&q=80&w=800",
+      "alt": "Bengaluru lake monitoring station"
+    },
+    "hyderabad_hub": {
+      "url": "https://images.unsplash.com/photo-1605648916361-9bc12ad6a566?auto=format&fit=crop&q=80&w=800",
+      "alt": "Hyderabad water infrastructure"
+    }
+  },
+  "instructions_to_main_agent": "Ensure absolute adherence to iOS-Clean design principles, proper safe-area insets, sticky bottom CTAs on all scrolling forms, and high-contrast WCAG AAA compliance. Implement the 3D water drop animation on startup and the quick demo role switcher floating across all screens for easy testing."
+}
