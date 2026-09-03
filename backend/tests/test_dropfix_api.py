@@ -199,3 +199,56 @@ def test_demo_users(api_client):
     assert r.status_code == 200
     d = r.json()
     assert set(d.keys()) == {"citizen", "officer", "admin"}
+
+
+# ---- Evidence Upload / Download (Object Storage) ----
+def _tiny_png_bytes() -> bytes:
+    # 1x1 transparent PNG
+    import base64
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII="
+    )
+
+
+def test_upload_image_and_download_roundtrip():
+    """POST /api/upload with PNG then GET /api/files/{path} returns the same bytes."""
+    png = _tiny_png_bytes()
+    files = {"file": ("test_pixel.png", png, "image/png")}
+    r = requests.post(f"{BASE_URL}/api/upload", files=files, timeout=30)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["success"] is True
+    assert body["content_type"] == "image/png"
+    assert body["is_video"] is False
+    assert body["size"] == len(png)
+    assert body["path"].endswith(".png")
+    assert body["url"].startswith("/api/files/")
+
+    # Round-trip
+    dl = requests.get(f"{BASE_URL}{body['url']}", timeout=30)
+    assert dl.status_code == 200
+    assert dl.headers.get("content-type", "").startswith("image/png")
+    assert dl.content == png
+
+
+def test_upload_rejects_unsupported_type():
+    files = {"file": ("bad.txt", b"hello", "text/plain")}
+    r = requests.post(f"{BASE_URL}/api/upload", files=files, timeout=30)
+    assert r.status_code == 400
+    assert "Unsupported" in r.json().get("detail", "")
+
+
+def test_reports_accept_photo_and_video_urls(api_client):
+    r = api_client.post(f"{BASE_URL}/api/reports", json={
+        "original_description": "TEST_media report with evidence",
+        "category": "Visible Particles/Sludge",
+        "state": "Karnataka", "district": "Bengaluru Urban",
+        "city_town": "Bengaluru", "ward_locality": "TEST_MediaWard",
+        "photo_urls": ["/api/files/dropfix/uploads/citizen/fake1.png"],
+        "video_urls": ["/api/files/dropfix/uploads/citizen/fake2.mp4"],
+    })
+    assert r.status_code == 200, r.text
+    rep = r.json()["report"]
+    assert rep["photo_urls"] == ["/api/files/dropfix/uploads/citizen/fake1.png"]
+    assert rep["video_urls"] == ["/api/files/dropfix/uploads/citizen/fake2.mp4"]
+    assert rep["report_id"].startswith("DF-2026-KA-")

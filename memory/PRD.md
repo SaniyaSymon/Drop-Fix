@@ -53,13 +53,28 @@ and an Android-ready mobile experience.
   real transcript structuring + translation (previously silently used rule-based fallback).
 - **Verified:** testing_agent iteration_2 — 17/17 backend + 7/7 frontend flows PASS.
 
+### 2026-09-03
+- **Photo/Video Evidence:** `services/storage_service.py` (Emergent Object Storage handshake),
+  `POST /api/upload` + `GET /api/files/{path}`; report form evidence picker (gallery + camera)
+  with permission handling, thumbnails, remove; `src/utils/uploadMedia.ts` (web/native FormData split).
+- **Live Refresh:** `IncidentContext` polls every 20s (paused when app backgrounded via AppState);
+  Home shows a live-updates indicator; map/dashboards reflect new approved incidents automatically.
+- **Offline Drafts:** NetInfo-based connectivity monitor; failed submits queue to local storage and
+  auto-submit on reconnect; Home offline/sync banner + "Saved Offline" modal.
+- **Nearby Alerts:** Home "Alerts Near You" with a persisted area (state) picker; empty state when none.
+- **Home + Nav redesign (white + medium/light blue):** Report hero card, stat counters, Quick
+  Services & Tools grid; new bottom tab bar Home | Map | [center voice mic] | AI Assistant | Settings;
+  added AI Assistant screen and Settings screen (language + role + dashboard access).
+- i18n: added all new keys (nav/home/report-evidence/offline/perm/ai/settings) in all 5 languages.
+- app.json: camera + media-library permissions and expo-image-picker plugin.
+- **Verified:** testing_agent iteration_3 — 20/20 backend + 100% frontend flows PASS.
+
 ## Backlog (prioritized)
-- **P0:** (none open — core citizen→authority→resolution loop is functional)
-- **P1:** Evidence photo/video upload via Emergent Managed Object Storage (currently URL fields only).
-- **P1:** Real-time map refresh (polling) so newly-approved incidents appear without manual reload.
-- **P2:** Split `app/index.tsx` (~2400 lines) into route files for maintainability.
-- **P2:** Offline form caching / draft persistence.
-- **P2:** Harden non-demo endpoints with auth before production (demo mode currently open).
+- **P1:** Split `app/index.tsx` (>2400 lines) into route files for maintainability.
+- **P1:** Exercise offline auto-submit on a real device / native build (not simulatable in web preview).
+- **P2:** Add dedicated testIDs to Officer/Admin dashboards & Map/List toggle.
+- **P2:** Harden non-demo endpoints (incl. `/api/seed`) with auth before production.
+- **P2:** Replace deprecated `shadow*`/`pointerEvents` style props.
 
 ## Next Tasks
 1. Add evidence media capture + Object Storage upload in the report flow.

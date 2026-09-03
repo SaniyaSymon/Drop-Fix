@@ -7,15 +7,22 @@ import {
   ScrollView,
   TextInput,
   Modal,
-  ActivityIndicator
+  ActivityIndicator,
+  Linking
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
+import { Image } from "expo-image";
+import * as ImagePicker from "expo-image-picker";
+
+import { uploadMedia } from "../src/utils/uploadMedia";
+import { storage } from "@/src/utils/storage";
 
 // Contexts
 import { useLanguage } from "../src/context/LanguageContext";
 import { useAuth } from "../src/context/AuthContext";
 import { useIncidents, ReportItem } from "../src/context/IncidentContext";
+import { SUPPORTED_LANGUAGES } from "../src/i18n";
 
 // Components
 import { Splash3DAnimation } from "../src/components/Splash3DAnimation";
@@ -30,7 +37,6 @@ import { StatusTimeline } from "../src/components/StatusTimeline";
 // Icons
 import {
   Home,
-  PlusCircle,
   MapPin,
   Search,
   ShieldCheck,
@@ -43,7 +49,13 @@ import {
   ShieldAlert,
   Sparkles,
   X,
-  RefreshCw
+  RefreshCw,
+  ImagePlus,
+  Video as VideoIcon,
+  Trash2,
+  WifiOff,
+  Bell,
+  CloudUpload
 } from "lucide-react-native";
 
 const SOUTH_INDIA_STATES = [
@@ -79,8 +91,8 @@ const WATER_SOURCES = [
 
 export default function AppIndex() {
   const insets = useSafeAreaInsets();
-  const { language, t } = useLanguage();
-  const { role, user } = useAuth();
+  const { language, setLanguage, t } = useLanguage();
+  const { role, user, switchRole } = useAuth();
   const {
     reports,
     advisories,
@@ -91,12 +103,17 @@ export default function AppIndex() {
     createReport,
     trackReport,
     updateReportStatus,
-    reseedDatabase
+    reseedDatabase,
+    isOnline,
+    pendingDraftsCount,
+    lastLiveUpdate
   } = useIncidents();
 
   // App State
   const [showSplash, setShowSplash] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<"home" | "report" | "map" | "track" | "ops">("home");
+  const [activeTab, setActiveTab] = useState<
+    "home" | "report" | "map" | "track" | "ops" | "ai" | "settings"
+  >("home");
 
   // Modals
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
@@ -118,10 +135,19 @@ export default function AppIndex() {
   const [isAnonymous, setIsAnonymous] = useState<boolean>(true);
   const [reporterName, setReporterName] = useState<string>("");
   const [reporterPhone, setReporterPhone] = useState<string>("");
-  const [selectedPhotos] = useState<string[]>([
-    "https://images.unsplash.com/photo-1548839140-29a749e1cf4d?auto=format&fit=crop&q=80&w=600"
-  ]);
   const [isSubmittingReport, setIsSubmittingReport] = useState<boolean>(false);
+
+  // Evidence Media State (Object Storage uploads)
+  const [evidenceMedia, setEvidenceMedia] = useState<
+    { url: string; is_video: boolean; path: string }[]
+  >([]);
+  const [isUploadingMedia, setIsUploadingMedia] = useState<boolean>(false);
+  const [mediaPermissionBlocked, setMediaPermissionBlocked] = useState<boolean>(false);
+  const [offlineSavedVisible, setOfflineSavedVisible] = useState<boolean>(false);
+
+  // Nearby Alerts (home) — citizen's chosen home state, persisted
+  const [homeAreaState, setHomeAreaState] = useState<string>("Tamil Nadu");
+  const [isAreaPickerOpen, setIsAreaPickerOpen] = useState<boolean>(false);
 
   // Tracking Form State
   const [trackReportIdInput, setTrackReportIdInput] = useState<string>("");
@@ -134,6 +160,103 @@ export default function AppIndex() {
   const [officerStatusSelect, setOfficerStatusSelect] = useState<string>("Field Investigation");
   const [officerNotesInput, setOfficerNotesInput] = useState<string>("");
   const [isUpdatingStatus, setIsUpdatingStatus] = useState<boolean>(false);
+
+  // Load persisted "my area" for Nearby Alerts
+  React.useEffect(() => {
+    (async () => {
+      const saved = await storage.getItem<string>("dropfix_home_area_state", "Tamil Nadu");
+      if (saved && SOUTH_INDIA_STATES.includes(saved)) setHomeAreaState(saved);
+    })();
+  }, []);
+
+  const selectHomeArea = async (st: string) => {
+    setHomeAreaState(st);
+    setIsAreaPickerOpen(false);
+    await storage.setItem("dropfix_home_area_state", st);
+  };
+
+  // Advisories relevant to the citizen's chosen area
+  const nearbyAdvisories = advisories.filter((a) => a.state === homeAreaState);
+
+  // ---- Evidence media capture / upload ----
+  const uploadPickedAssets = async (assets: ImagePicker.ImagePickerAsset[]) => {
+    setIsUploadingMedia(true);
+    try {
+      for (const asset of assets) {
+        const isVideo = asset.type === "video";
+        const ext = isVideo ? "mp4" : "jpg";
+        const name = asset.fileName || `evidence-${Date.now()}.${ext}`;
+        const mime = asset.mimeType || (isVideo ? "video/mp4" : "image/jpeg");
+        try {
+          const uploaded = await uploadMedia(asset.uri, name, mime);
+          setEvidenceMedia((prev) => [
+            ...prev,
+            { url: uploaded.url, is_video: uploaded.is_video, path: uploaded.path }
+          ]);
+        } catch (e: any) {
+          alert(e.message || "Could not upload this file. Please try again.");
+        }
+      }
+    } finally {
+      setIsUploadingMedia(false);
+    }
+  };
+
+  const handlePickFromLibrary = async () => {
+    const perm = await ImagePicker.getMediaLibraryPermissionsAsync();
+    let status = perm.status;
+    if (status !== "granted") {
+      if (!perm.canAskAgain) {
+        setMediaPermissionBlocked(true);
+        return;
+      }
+      const req = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      status = req.status;
+      if (status !== "granted") {
+        if (!req.canAskAgain) setMediaPermissionBlocked(true);
+        return;
+      }
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images", "videos"],
+      allowsMultipleSelection: true,
+      selectionLimit: 4,
+      quality: 0.6,
+      videoMaxDuration: 30
+    });
+    if (!result.canceled && result.assets?.length) {
+      await uploadPickedAssets(result.assets);
+    }
+  };
+
+  const handleCaptureFromCamera = async () => {
+    const perm = await ImagePicker.getCameraPermissionsAsync();
+    let status = perm.status;
+    if (status !== "granted") {
+      if (!perm.canAskAgain) {
+        setMediaPermissionBlocked(true);
+        return;
+      }
+      const req = await ImagePicker.requestCameraPermissionsAsync();
+      status = req.status;
+      if (status !== "granted") {
+        if (!req.canAskAgain) setMediaPermissionBlocked(true);
+        return;
+      }
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images", "videos"],
+      quality: 0.6,
+      videoMaxDuration: 30
+    });
+    if (!result.canceled && result.assets?.length) {
+      await uploadPickedAssets(result.assets);
+    }
+  };
+
+  const removeEvidence = (path: string) => {
+    setEvidenceMedia((prev) => prev.filter((m) => m.path !== path));
+  };
 
   // Handle Voice Assistant Structured Data Fill
   const handleStructuredVoiceData = (data: any) => {
@@ -177,7 +300,8 @@ export default function AppIndex() {
         multiple_households_affected: isMultipleHouseholds,
         affected_households_count_approx: isMultipleHouseholds ? "5-15 households" : "1",
         water_source_type: reportWaterSource,
-        photo_urls: selectedPhotos
+        photo_urls: evidenceMedia.filter((m) => !m.is_video).map((m) => m.url),
+        video_urls: evidenceMedia.filter((m) => m.is_video).map((m) => m.url)
       };
 
       const result = await createReport(payload);
@@ -187,8 +311,19 @@ export default function AppIndex() {
       setReportVoiceTranscript("");
       setReportLocality("");
       setReportLandmark("");
+      setEvidenceMedia([]);
     } catch (e: any) {
-      alert(e.message || "Failed to submit report. Please try again.");
+      if (e?.code === "OFFLINE_QUEUED" || e?.message === "OFFLINE_QUEUED") {
+        // Saved as offline draft — will auto-submit on reconnect
+        setOfflineSavedVisible(true);
+        setReportDescription("");
+        setReportVoiceTranscript("");
+        setReportLocality("");
+        setReportLandmark("");
+        setEvidenceMedia([]);
+      } else {
+        alert(e.message || "Failed to submit report. Please try again.");
+      }
     } finally {
       setIsSubmittingReport(false);
     }
@@ -253,138 +388,227 @@ export default function AppIndex() {
         {/* TAB 1: HOME */}
         {activeTab === "home" && (
           <ScrollView style={styles.tabScrollView} showsVerticalScrollIndicator={false}>
-            {/* Cautionary Civic Banner */}
-            <View style={styles.disclaimerBanner} testID="home-disclaimer-banner">
-              <ShieldCheck size={16} color="#0369A1" />
-              <Text style={styles.disclaimerText}>{t("disclaimer_banner")}</Text>
-            </View>
-
-            {/* Hero Card */}
-            <LinearGradient
-              colors={["#0C4A6E", "#0284C7"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.heroCard}
-            >
-              <View style={styles.heroTextCol}>
-                <Text style={styles.heroTitle}>{t("home.hero_title")}</Text>
-                <Text style={styles.heroSubtitle}>{t("home.hero_subtitle")}</Text>
-
-                <View style={styles.heroStateBadges}>
-                  <Text style={styles.heroCoverageLabel}>Covering 6 South Indian Regions:</Text>
-                  <Text style={styles.heroStateNames}>
-                    Tamil Nadu • Kerala • Karnataka • AP • Telangana • Puducherry
-                  </Text>
-                </View>
+            {/* Offline / Draft Sync Banner */}
+            {(!isOnline || pendingDraftsCount > 0) && (
+              <View
+                style={[styles.connBanner, !isOnline ? styles.connBannerOffline : styles.connBannerSync]}
+                testID="home-offline-banner"
+              >
+                {!isOnline ? (
+                  <WifiOff size={16} color="#B45309" />
+                ) : (
+                  <CloudUpload size={16} color="#0369A1" />
+                )}
+                <Text style={styles.connBannerText}>
+                  {!isOnline
+                    ? t("offline.you_are_offline")
+                    : `${pendingDraftsCount} ${t("offline.pending_sync")}`}
+                </Text>
               </View>
-            </LinearGradient>
+            )}
 
-            {/* Quick Action Hub */}
-            <View style={styles.quickActionsGrid}>
-              <TouchableOpacity
-                testID="quick-action-voice-report"
-                style={[styles.quickActionCard, { backgroundColor: "#F0F9FF", borderColor: "#BAE6FD" }]}
-                onPress={() => setIsVoiceModalOpen(true)}
-                activeOpacity={0.8}
+            {/* Report Hero Card */}
+            <TouchableOpacity
+              testID="home-report-hero"
+              activeOpacity={0.9}
+              onPress={() => setActiveTab("report")}
+            >
+              <LinearGradient
+                colors={["#0284C7", "#0EA5E9"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.reportHeroCard}
               >
-                <View style={[styles.actionIconBadge, { backgroundColor: "#0284C7" }]}>
-                  <Mic size={20} color="#FFFFFF" />
+                <View style={styles.heroSecureBadge}>
+                  <ShieldCheck size={12} color="#FFFFFF" />
+                  <Text style={styles.heroSecureBadgeText}>{t("home.anonymous_secure")}</Text>
                 </View>
-                <Text style={styles.actionCardTitle}>{t("home.quick_report_voice")}</Text>
-                <Text style={styles.actionCardSub}>Speak in 5 Languages</Text>
-              </TouchableOpacity>
 
-              <TouchableOpacity
-                testID="quick-action-photo-report"
-                style={[styles.quickActionCard, { backgroundColor: "#FDF2F8", borderColor: "#FBCFE8" }]}
-                onPress={() => setActiveTab("report")}
-                activeOpacity={0.8}
-              >
-                <View style={[styles.actionIconBadge, { backgroundColor: "#DB2777" }]}>
-                  <Camera size={20} color="#FFFFFF" />
+                <View style={styles.heroTitleRow}>
+                  <Text style={styles.reportHeroTitle}>{t("nav.report")}</Text>
+                  <View style={styles.heroArrowCircle}>
+                    <Send size={16} color="#0284C7" />
+                  </View>
                 </View>
-                <Text style={styles.actionCardTitle}>{t("home.quick_report_camera")}</Text>
-                <Text style={styles.actionCardSub}>Upload Photo / Video</Text>
-              </TouchableOpacity>
+                <Text style={styles.reportHeroSub}>{t("home.report_hero_sub")}</Text>
 
-              <TouchableOpacity
-                testID="quick-action-track-id"
-                style={[styles.quickActionCard, { backgroundColor: "#F5F3FF", borderColor: "#DDD6FE" }]}
-                onPress={() => setActiveTab("track")}
-                activeOpacity={0.8}
-              >
-                <View style={[styles.actionIconBadge, { backgroundColor: "#7C3AED" }]}>
-                  <Search size={20} color="#FFFFFF" />
+                <View style={styles.heroChipsRow}>
+                  <View style={styles.heroChip}>
+                    <Camera size={11} color="#FFFFFF" />
+                    <Text style={styles.heroChipText}>{t("home.chip_photo")}</Text>
+                  </View>
+                  <View style={styles.heroChip}>
+                    <MapPin size={11} color="#FFFFFF" />
+                    <Text style={styles.heroChipText}>{t("home.chip_gps")}</Text>
+                  </View>
+                  <View style={styles.heroChip}>
+                    <Sparkles size={11} color="#FFFFFF" />
+                    <Text style={styles.heroChipText}>{t("home.chip_ai")}</Text>
+                  </View>
                 </View>
-                <Text style={styles.actionCardTitle}>{t("home.quick_track")}</Text>
-                <Text style={styles.actionCardSub}>Live Authority Timeline</Text>
-              </TouchableOpacity>
-            </View>
+              </LinearGradient>
+            </TouchableOpacity>
 
-            {/* Quick Live Telemetry Counter */}
+            {/* Live Stat Counters */}
             {analytics && (
-              <View style={styles.telemetryBar}>
-                <View style={styles.telemetryStat}>
-                  <Text style={styles.statNum}>{analytics.total_reports}</Text>
-                  <Text style={styles.statLabel}>{t("home.stats_total")}</Text>
+              <View style={styles.statCountersRow} testID="home-stat-counters">
+                <View style={styles.statCounterCard}>
+                  <Text style={[styles.statCounterNum, { color: "#0284C7" }]}>{analytics.total_reports}</Text>
+                  <Text style={styles.statCounterLabel}>{t("home.stat_active")}</Text>
                 </View>
-                <View style={styles.telemetryDivider} />
-                <View style={styles.telemetryStat}>
-                  <Text style={[styles.statNum, { color: "#10B981" }]}>
-                    {analytics.resolved_reports}
-                  </Text>
-                  <Text style={styles.statLabel}>{t("home.stats_resolved")}</Text>
+                <View style={styles.statCounterCard}>
+                  <Text style={[styles.statCounterNum, { color: "#F59E0B" }]}>{analytics.in_progress}</Text>
+                  <Text style={styles.statCounterLabel}>{t("home.stat_investigating")}</Text>
                 </View>
-                <View style={styles.telemetryDivider} />
-                <View style={styles.telemetryStat}>
-                  <Text style={[styles.statNum, { color: "#F59E0B" }]}>
-                    {analytics.in_progress}
-                  </Text>
-                  <Text style={styles.statLabel}>{t("home.stats_in_progress")}</Text>
+                <View style={styles.statCounterCard}>
+                  <Text style={[styles.statCounterNum, { color: "#10B981" }]}>{analytics.resolved_reports}</Text>
+                  <Text style={styles.statCounterLabel}>{t("home.stat_resolved")}</Text>
                 </View>
-                <View style={styles.telemetryDivider} />
-                <View style={styles.telemetryStat}>
-                  <Text style={[styles.statNum, { color: "#EF4444" }]}>
-                    {analytics.active_advisories}
-                  </Text>
-                  <Text style={styles.statLabel}>Advisories</Text>
+                <View style={styles.statCounterCard}>
+                  <Text style={[styles.statCounterNum, { color: "#EF4444" }]}>{analytics.active_advisories}</Text>
+                  <Text style={styles.statCounterLabel}>{t("home.stat_alerts")}</Text>
                 </View>
               </View>
             )}
 
-            {/* Active Advisories Section */}
+            {/* Live update indicator */}
+            {lastLiveUpdate && (
+              <View style={styles.liveIndicatorRow} testID="home-live-indicator">
+                <View style={styles.liveDot} />
+                <Text style={styles.liveIndicatorText}>{t("home.live_updates")}</Text>
+              </View>
+            )}
+
+            {/* Quick Services & Tools */}
+            <View style={styles.sectionContainer}>
+              <Text style={styles.sectionTitle}>{t("home.quick_services")}</Text>
+              <View style={styles.toolsGrid}>
+                <TouchableOpacity
+                  testID="tool-track"
+                  style={styles.toolCard}
+                  onPress={() => setActiveTab("track")}
+                  activeOpacity={0.85}
+                >
+                  <View style={[styles.toolIconBadge, { backgroundColor: "#E0F2FE" }]}>
+                    <Search size={18} color="#0284C7" />
+                  </View>
+                  <Text style={styles.toolTitle}>{t("nav.track")}</Text>
+                  <Text style={styles.toolSub}>{t("home.tool_track_sub")}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  testID="tool-map"
+                  style={styles.toolCard}
+                  onPress={() => setActiveTab("map")}
+                  activeOpacity={0.85}
+                >
+                  <View style={[styles.toolIconBadge, { backgroundColor: "#E0F2FE" }]}>
+                    <MapPin size={18} color="#0284C7" />
+                  </View>
+                  <Text style={styles.toolTitle}>{t("nav.map")}</Text>
+                  <Text style={styles.toolSub}>{t("home.tool_map_sub")}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  testID="tool-ai-assistant"
+                  style={styles.toolCard}
+                  onPress={() => setActiveTab("ai")}
+                  activeOpacity={0.85}
+                >
+                  <View style={[styles.toolIconBadge, { backgroundColor: "#DBEAFE" }]}>
+                    <Sparkles size={18} color="#0369A1" />
+                  </View>
+                  <Text style={styles.toolTitle}>{t("home.tool_ai")}</Text>
+                  <Text style={styles.toolSub}>{t("home.tool_ai_sub")}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  testID="tool-voice-assistant"
+                  style={styles.toolCard}
+                  onPress={() => setIsVoiceModalOpen(true)}
+                  activeOpacity={0.85}
+                >
+                  <View style={[styles.toolIconBadge, { backgroundColor: "#CFFAFE" }]}>
+                    <Mic size={18} color="#0891B2" />
+                  </View>
+                  <Text style={styles.toolTitle}>{t("home.tool_voice")}</Text>
+                  <Text style={styles.toolSub}>{t("home.tool_voice_sub")}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  testID="tool-smart-navigator"
+                  style={styles.toolCard}
+                  onPress={() => setIsGuideModalOpen(true)}
+                  activeOpacity={0.85}
+                >
+                  <View style={[styles.toolIconBadge, { backgroundColor: "#E0F2FE" }]}>
+                    <Home size={18} color="#0284C7" />
+                  </View>
+                  <Text style={styles.toolTitle}>{t("home.tool_guide")}</Text>
+                  <Text style={styles.toolSub}>{t("home.tool_guide_sub")}</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  testID="tool-water-safety"
+                  style={styles.toolCard}
+                  onPress={() => setActiveTab("ops")}
+                  activeOpacity={0.85}
+                >
+                  <View style={[styles.toolIconBadge, { backgroundColor: "#D1FAE5" }]}>
+                    <ShieldCheck size={18} color="#059669" />
+                  </View>
+                  <Text style={styles.toolTitle}>{t("nav.safety")}</Text>
+                  <Text style={styles.toolSub}>{t("home.tool_safety_sub")}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Alerts Near You */}
             <View style={styles.sectionContainer}>
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionTitleRow}>
-                  <AlertTriangle size={18} color="#EF4444" />
-                  <Text style={styles.sectionTitle}>{t("home.active_advisories")}</Text>
+                  <Bell size={18} color="#EF4444" />
+                  <Text style={styles.sectionTitle}>{t("home.alerts_near_you")}</Text>
                 </View>
-                <TouchableOpacity onPress={() => setActiveTab("ops")}>
-                  <Text style={styles.seeAllText}>View All</Text>
+                <TouchableOpacity
+                  testID="home-area-picker-btn"
+                  style={styles.areaPickerBtn}
+                  onPress={() => setIsAreaPickerOpen(true)}
+                >
+                  <MapPin size={12} color="#0284C7" />
+                  <Text style={styles.areaPickerText}>{homeAreaState}</Text>
                 </TouchableOpacity>
               </View>
 
-              {advisories.slice(0, 2).map((adv) => {
-                const title = adv.title_translations?.[language] || adv.title;
-                const desc = adv.description_translations?.[language] || adv.description;
-
-                return (
-                  <View key={adv.advisory_id} style={styles.advisoryCard} testID={`advisory-${adv.advisory_id}`}>
-                    <View style={styles.advisoryHeader}>
-                      <View style={styles.advisoryTypePill}>
-                        <Text style={styles.advisoryTypePillText}>{adv.advisory_type}</Text>
+              {nearbyAdvisories.length === 0 ? (
+                <View style={styles.noAlertsCard} testID="home-no-alerts">
+                  <ShieldCheck size={22} color="#10B981" />
+                  <Text style={styles.noAlertsText}>
+                    {t("home.no_alerts_prefix")} {homeAreaState}.
+                  </Text>
+                </View>
+              ) : (
+                nearbyAdvisories.slice(0, 3).map((adv) => {
+                  const title = adv.title_translations?.[language] || adv.title;
+                  const desc = adv.description_translations?.[language] || adv.description;
+                  return (
+                    <View key={adv.advisory_id} style={styles.advisoryCard} testID={`advisory-${adv.advisory_id}`}>
+                      <View style={styles.advisoryHeader}>
+                        <View style={styles.advisoryTypePill}>
+                          <Text style={styles.advisoryTypePillText}>{adv.advisory_type}</Text>
+                        </View>
+                        <Text style={styles.advisoryStateBadge}>
+                          📍 {adv.district}, {adv.state}
+                        </Text>
                       </View>
-                      <Text style={styles.advisoryStateBadge}>
-                        📍 {adv.district}, {adv.state}
+                      <Text style={styles.advisoryTitleText}>{title}</Text>
+                      <Text style={styles.advisoryDescText} numberOfLines={2}>
+                        {desc}
                       </Text>
                     </View>
-                    <Text style={styles.advisoryTitleText}>{title}</Text>
-                    <Text style={styles.advisoryDescText} numberOfLines={2}>
-                      {desc}
-                    </Text>
-                  </View>
-                );
-              })}
+                  );
+                })
+              )}
             </View>
 
             {/* Category Filter Chips (P0 Spec) */}
@@ -654,6 +878,72 @@ export default function AppIndex() {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+
+              {/* Evidence Photo / Video */}
+              <Text style={styles.inputLabel}>{t("report.attach_photo")}</Text>
+              <View style={styles.evidenceActionsRow}>
+                <TouchableOpacity
+                  testID="evidence-pick-library-btn"
+                  style={styles.evidenceActionBtn}
+                  onPress={handlePickFromLibrary}
+                  disabled={isUploadingMedia}
+                  activeOpacity={0.85}
+                >
+                  <ImagePlus size={18} color="#0284C7" />
+                  <Text style={styles.evidenceActionText}>{t("report.evidence_gallery")}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  testID="evidence-capture-camera-btn"
+                  style={styles.evidenceActionBtn}
+                  onPress={handleCaptureFromCamera}
+                  disabled={isUploadingMedia}
+                  activeOpacity={0.85}
+                >
+                  <Camera size={18} color="#0284C7" />
+                  <Text style={styles.evidenceActionText}>{t("report.evidence_camera")}</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.evidenceHint}>{t("report.evidence_hint")}</Text>
+
+              {isUploadingMedia && (
+                <View style={styles.evidenceUploadingRow} testID="evidence-uploading">
+                  <ActivityIndicator size="small" color="#0284C7" />
+                  <Text style={styles.evidenceUploadingText}>{t("report.evidence_uploading")}</Text>
+                </View>
+              )}
+
+              {evidenceMedia.length > 0 && (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.evidenceThumbsRow}
+                  contentContainerStyle={{ gap: 10, paddingVertical: 4 }}
+                >
+                  {evidenceMedia.map((m) => (
+                    <View key={m.path} style={styles.evidenceThumbWrap} testID={`evidence-thumb-${m.path}`}>
+                      <Image
+                        source={{ uri: m.url }}
+                        style={styles.evidenceThumb}
+                        contentFit="cover"
+                        transition={200}
+                      />
+                      {m.is_video && (
+                        <View style={styles.evidenceVideoBadge}>
+                          <VideoIcon size={12} color="#FFFFFF" />
+                        </View>
+                      )}
+                      <TouchableOpacity
+                        testID={`evidence-remove-${m.path}`}
+                        style={styles.evidenceRemoveBtn}
+                        onPress={() => removeEvidence(m.path)}
+                      >
+                        <Trash2 size={12} color="#FFFFFF" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+
 
               {/* Multiple Households Toggle */}
               <TouchableOpacity
@@ -1049,29 +1339,184 @@ export default function AppIndex() {
             )}
           </ScrollView>
         )}
+
+        {/* TAB: AI ASSISTANT */}
+        {activeTab === "ai" && (
+          <ScrollView
+            style={styles.tabScrollView}
+            showsVerticalScrollIndicator={false}
+            testID="ai-assistant-screen"
+          >
+            <View style={styles.aiHeaderCard}>
+              <View style={styles.aiHeaderIcon}>
+                <Sparkles size={26} color="#FFFFFF" />
+              </View>
+              <Text style={styles.aiHeaderTitle}>{t("ai.title")}</Text>
+              <Text style={styles.aiHeaderSub}>{t("ai.subtitle")}</Text>
+            </View>
+
+            <TouchableOpacity
+              testID="ai-open-voice-btn"
+              style={styles.aiPrimaryBtn}
+              onPress={() => setIsVoiceModalOpen(true)}
+              activeOpacity={0.9}
+            >
+              <LinearGradient
+                colors={["#0284C7", "#0EA5E9"]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.aiPrimaryGradient}
+              >
+                <View style={styles.micCircle}>
+                  <Mic size={20} color="#0284C7" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.aiPrimaryTitle}>{t("ai.voice_cta_title")}</Text>
+                  <Text style={styles.aiPrimarySub}>{t("ai.voice_cta_sub")}</Text>
+                </View>
+                <Send size={18} color="#FFFFFF" />
+              </LinearGradient>
+            </TouchableOpacity>
+
+            <View style={styles.aiFeatureList}>
+              <View style={styles.aiFeatureRow}>
+                <View style={[styles.aiFeatureIcon, { backgroundColor: "#E0F2FE" }]}>
+                  <Sparkles size={16} color="#0284C7" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.aiFeatureTitle}>{t("ai.feat_triage_title")}</Text>
+                  <Text style={styles.aiFeatureDesc}>{t("ai.feat_triage_desc")}</Text>
+                </View>
+              </View>
+              <View style={styles.aiFeatureRow}>
+                <View style={[styles.aiFeatureIcon, { backgroundColor: "#DBEAFE" }]}>
+                  <Send size={16} color="#0369A1" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.aiFeatureTitle}>{t("ai.feat_translate_title")}</Text>
+                  <Text style={styles.aiFeatureDesc}>{t("ai.feat_translate_desc")}</Text>
+                </View>
+              </View>
+              <View style={styles.aiFeatureRow}>
+                <View style={[styles.aiFeatureIcon, { backgroundColor: "#CFFAFE" }]}>
+                  <Home size={16} color="#0891B2" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.aiFeatureTitle}>{t("ai.feat_guide_title")}</Text>
+                  <Text style={styles.aiFeatureDesc}>{t("ai.feat_guide_desc")}</Text>
+                </View>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              testID="ai-open-guide-btn"
+              style={styles.aiSecondaryBtn}
+              onPress={() => setIsGuideModalOpen(true)}
+            >
+              <Text style={styles.aiSecondaryBtnText}>{t("ai.open_guide")}</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.aiDisclaimer}>{t("ai.disclaimer")}</Text>
+          </ScrollView>
+        )}
+
+        {/* TAB: SETTINGS */}
+        {activeTab === "settings" && (
+          <ScrollView
+            style={styles.tabScrollView}
+            showsVerticalScrollIndicator={false}
+            testID="settings-screen"
+          >
+            {/* Profile card */}
+            <View style={styles.settingsProfileCard}>
+              <Image source={{ uri: user.avatar }} style={styles.settingsAvatar} contentFit="cover" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingsName}>{user.name}</Text>
+                <Text style={styles.settingsBadge}>{user.badge}</Text>
+                <Text style={styles.settingsJurisdiction}>📍 {user.jurisdiction}</Text>
+              </View>
+            </View>
+
+            {/* Language selector */}
+            <Text style={styles.settingsSectionTitle}>{t("settings.language")}</Text>
+            <View style={styles.settingsLangGrid}>
+              {SUPPORTED_LANGUAGES.map((lng) => (
+                <TouchableOpacity
+                  key={lng.code}
+                  testID={`settings-lang-${lng.code}`}
+                  style={[styles.settingsLangPill, language === lng.code && styles.settingsLangPillActive]}
+                  onPress={() => setLanguage(lng.code)}
+                >
+                  <Text
+                    style={[
+                      styles.settingsLangText,
+                      language === lng.code && styles.settingsLangTextActive
+                    ]}
+                  >
+                    {lng.nativeLabel}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Role switch */}
+            <Text style={styles.settingsSectionTitle}>{t("settings.role")}</Text>
+            <View style={styles.settingsRoleRow}>
+              {(["citizen", "officer", "admin"] as const).map((r) => (
+                <TouchableOpacity
+                  key={r}
+                  testID={`settings-role-${r}`}
+                  style={[styles.settingsRolePill, role === r && styles.settingsRolePillActive]}
+                  onPress={() => switchRole(r)}
+                >
+                  <Text style={[styles.settingsRoleText, role === r && styles.settingsRoleTextActive]}>
+                    {t(`roles.${r}`)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Role dashboard access */}
+            <TouchableOpacity
+              testID="settings-open-dashboard-btn"
+              style={styles.settingsDashboardBtn}
+              onPress={() => setActiveTab("ops")}
+            >
+              {role === "officer" ? (
+                <Wrench size={18} color="#FFFFFF" />
+              ) : role === "admin" ? (
+                <ShieldAlert size={18} color="#FFFFFF" />
+              ) : (
+                <ShieldCheck size={18} color="#FFFFFF" />
+              )}
+              <Text style={styles.settingsDashboardBtnText}>
+                {role === "citizen"
+                  ? t("nav.safety")
+                  : role === "officer"
+                  ? t("nav.authority")
+                  : t("nav.admin")}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Disclaimer */}
+            <View style={styles.settingsDisclaimerBox}>
+              <ShieldCheck size={14} color="#0369A1" />
+              <Text style={styles.settingsDisclaimerText}>{t("disclaimer_banner")}</Text>
+            </View>
+          </ScrollView>
+        )}
       </View>
 
-      {/* Modern Bottom Navigation Bar */}
+      {/* Modern Bottom Navigation Bar with Center Voice Mic */}
       <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 12) }]} testID="bottom-navigation-bar">
         <TouchableOpacity
           testID="tab-btn-home"
           style={styles.tabButton}
           onPress={() => setActiveTab("home")}
         >
-          <Home size={22} color={activeTab === "home" ? "#0284C7" : "#64748B"} />
+          <Home size={22} color={activeTab === "home" ? "#0284C7" : "#94A3B8"} />
           <Text style={[styles.tabLabel, activeTab === "home" && styles.tabLabelActive]}>
             {t("nav.home")}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          testID="tab-btn-report"
-          style={styles.tabButton}
-          onPress={() => setActiveTab("report")}
-        >
-          <PlusCircle size={22} color={activeTab === "report" ? "#0284C7" : "#64748B"} />
-          <Text style={[styles.tabLabel, activeTab === "report" && styles.tabLabelActive]}>
-            {t("nav.report")}
           </Text>
         </TouchableOpacity>
 
@@ -1080,37 +1525,50 @@ export default function AppIndex() {
           style={styles.tabButton}
           onPress={() => setActiveTab("map")}
         >
-          <MapPin size={22} color={activeTab === "map" ? "#0284C7" : "#64748B"} />
+          <MapPin size={22} color={activeTab === "map" ? "#0284C7" : "#94A3B8"} />
           <Text style={[styles.tabLabel, activeTab === "map" && styles.tabLabelActive]}>
             {t("nav.map")}
           </Text>
         </TouchableOpacity>
 
+        {/* Center Floating Voice Mic */}
+        <View style={styles.tabButtonCenter}>
+          <TouchableOpacity
+            testID="tab-btn-voice-mic"
+            style={styles.centerMicBtn}
+            onPress={() => setIsVoiceModalOpen(true)}
+            activeOpacity={0.85}
+          >
+            <LinearGradient
+              colors={["#0EA5E9", "#0284C7"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.centerMicGradient}
+            >
+              <Mic size={24} color="#FFFFFF" />
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+
         <TouchableOpacity
-          testID="tab-btn-track"
+          testID="tab-btn-ai"
           style={styles.tabButton}
-          onPress={() => setActiveTab("track")}
+          onPress={() => setActiveTab("ai")}
         >
-          <Search size={22} color={activeTab === "track" ? "#0284C7" : "#64748B"} />
-          <Text style={[styles.tabLabel, activeTab === "track" && styles.tabLabelActive]}>
-            {t("nav.track")}
+          <Sparkles size={22} color={activeTab === "ai" ? "#0284C7" : "#94A3B8"} />
+          <Text style={[styles.tabLabel, activeTab === "ai" && styles.tabLabelActive]}>
+            {t("nav.ai")}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          testID="tab-btn-operations"
+          testID="tab-btn-settings"
           style={styles.tabButton}
-          onPress={() => setActiveTab("ops")}
+          onPress={() => setActiveTab("settings")}
         >
-          {role === "citizen" ? (
-            <ShieldCheck size={22} color={activeTab === "ops" ? "#0284C7" : "#64748B"} />
-          ) : role === "officer" ? (
-            <Wrench size={22} color={activeTab === "ops" ? "#D97706" : "#64748B"} />
-          ) : (
-            <ShieldAlert size={22} color={activeTab === "ops" ? "#047857" : "#64748B"} />
-          )}
-          <Text style={[styles.tabLabel, activeTab === "ops" && styles.tabLabelActive]}>
-            {role === "citizen" ? t("nav.safety") : role === "officer" ? t("nav.authority") : t("nav.admin")}
+          <ShieldCheck size={22} color={activeTab === "settings" ? "#0284C7" : "#94A3B8"} />
+          <Text style={[styles.tabLabel, activeTab === "settings" && styles.tabLabelActive]}>
+            {t("nav.settings")}
           </Text>
         </TouchableOpacity>
       </View>
@@ -1137,6 +1595,95 @@ export default function AppIndex() {
           else if (screen === "safety") setActiveTab("ops");
         }}
       />
+
+      {/* Offline Draft Saved Modal */}
+      {offlineSavedVisible && (
+        <Modal visible transparent animationType="fade">
+          <View style={styles.modalBackdrop}>
+            <View style={styles.offlineModalCard} testID="offline-saved-modal">
+              <View style={styles.offlineModalIcon}>
+                <CloudUpload size={30} color="#0284C7" />
+              </View>
+              <Text style={styles.offlineModalTitle}>{t("offline.saved_title")}</Text>
+              <Text style={styles.offlineModalText}>{t("offline.saved_body")}</Text>
+              <TouchableOpacity
+                testID="offline-saved-ok-btn"
+                style={styles.offlineModalBtn}
+                onPress={() => {
+                  setOfflineSavedVisible(false);
+                  setActiveTab("home");
+                }}
+              >
+                <Text style={styles.offlineModalBtnText}>{t("offline.got_it")}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Media Permission Blocked Modal */}
+      {mediaPermissionBlocked && (
+        <Modal visible transparent animationType="fade">
+          <View style={styles.modalBackdrop}>
+            <View style={styles.offlineModalCard} testID="media-permission-modal">
+              <View style={[styles.offlineModalIcon, { backgroundColor: "#FEF3C7" }]}>
+                <Camera size={28} color="#D97706" />
+              </View>
+              <Text style={styles.offlineModalTitle}>{t("perm.title")}</Text>
+              <Text style={styles.offlineModalText}>{t("perm.body")}</Text>
+              <TouchableOpacity
+                testID="media-permission-settings-btn"
+                style={styles.offlineModalBtn}
+                onPress={() => {
+                  setMediaPermissionBlocked(false);
+                  Linking.openSettings();
+                }}
+              >
+                <Text style={styles.offlineModalBtnText}>{t("perm.open_settings")}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="media-permission-cancel-btn"
+                onPress={() => setMediaPermissionBlocked(false)}
+              >
+                <Text style={styles.offlineModalCancelText}>{t("perm.not_now")}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Nearby Alerts Area Picker */}
+      {isAreaPickerOpen && (
+        <Modal visible transparent animationType="slide">
+          <TouchableOpacity
+            style={styles.sheetBackdrop}
+            activeOpacity={1}
+            onPress={() => setIsAreaPickerOpen(false)}
+          >
+            <View style={styles.areaSheet} testID="area-picker-sheet">
+              <View style={styles.sheetHandle} />
+              <Text style={styles.areaSheetTitle}>{t("home.choose_area")}</Text>
+              {SOUTH_INDIA_STATES.map((st) => (
+                <TouchableOpacity
+                  key={st}
+                  testID={`area-option-${st}`}
+                  style={[styles.areaOption, homeAreaState === st && styles.areaOptionActive]}
+                  onPress={() => selectHomeArea(st)}
+                >
+                  <MapPin size={16} color={homeAreaState === st ? "#0284C7" : "#94A3B8"} />
+                  <Text
+                    style={[styles.areaOptionText, homeAreaState === st && styles.areaOptionTextActive]}
+                  >
+                    {st}
+                  </Text>
+                  {homeAreaState === st && <CheckCircle2 size={16} color="#0284C7" />}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
+
 
       {/* Submission Success Modal with Report ID & Tracking Code */}
       {submittedReport && (
@@ -1225,11 +1772,11 @@ export default function AppIndex() {
                 <View style={styles.detailDescBox}>
                   <Text style={styles.detailDescLabel}>Reported Description:</Text>
                   <Text style={styles.detailDescText}>
-                    "{selectedReportDetail.original_description}"
+                    {`"${selectedReportDetail.original_description}"`}
                   </Text>
                   {selectedReportDetail.translated_description_en && (
                     <Text style={styles.detailDescEn}>
-                      English: "{selectedReportDetail.translated_description_en}"
+                      {`English: "${selectedReportDetail.translated_description_en}"`}
                     </Text>
                   )}
                 </View>
@@ -2186,9 +2733,32 @@ const styles = StyleSheet.create({
     elevation: 8
   },
   tabButton: {
+    flex: 1,
     alignItems: "center",
     gap: 2,
-    paddingHorizontal: 8
+    paddingHorizontal: 4
+  },
+  tabButtonCenter: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  centerMicBtn: {
+    marginTop: -28
+  },
+  centerMicGradient: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 4,
+    borderColor: "#FFFFFF",
+    shadowColor: "#0284C7",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 8
   },
   tabLabel: {
     fontSize: 10,
@@ -2386,5 +2956,620 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 13,
     fontWeight: "700"
+  },
+
+  /* ===== Redesigned Home ===== */
+  connBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1
+  },
+  connBannerOffline: {
+    backgroundColor: "#FEF3C7",
+    borderColor: "#FDE68A"
+  },
+  connBannerSync: {
+    backgroundColor: "#E0F2FE",
+    borderColor: "#BAE6FD"
+  },
+  connBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#334155"
+  },
+  reportHeroCard: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    borderRadius: 20,
+    padding: 18,
+    shadowColor: "#0284C7",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6
+  },
+  heroSecureBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    alignSelf: "flex-start",
+    backgroundColor: "rgba(255,255,255,0.22)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    marginBottom: 12
+  },
+  heroSecureBadgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#FFFFFF"
+  },
+  heroTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  reportHeroTitle: {
+    fontSize: 26,
+    fontWeight: "900",
+    color: "#FFFFFF",
+    letterSpacing: 0.3
+  },
+  heroArrowCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  reportHeroSub: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.92)",
+    lineHeight: 19,
+    marginTop: 6,
+    marginBottom: 14
+  },
+  heroChipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  heroChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20
+  },
+  heroChipText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#FFFFFF"
+  },
+  statCountersRow: {
+    flexDirection: "row",
+    gap: 10,
+    paddingHorizontal: 16,
+    marginTop: 16
+  },
+  statCounterCard: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E2E8F0"
+  },
+  statCounterNum: {
+    fontSize: 20,
+    fontWeight: "900"
+  },
+  statCounterLabel: {
+    fontSize: 9.5,
+    fontWeight: "700",
+    color: "#64748B",
+    marginTop: 2,
+    textAlign: "center"
+  },
+  liveIndicatorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 18,
+    marginTop: 10
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#10B981"
+  },
+  liveIndicatorText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#059669"
+  },
+  toolsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 4
+  },
+  toolCard: {
+    width: "47.6%",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0"
+  },
+  toolIconBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8
+  },
+  toolTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0F172A"
+  },
+  toolSub: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 2
+  },
+  areaPickerBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#E0F2FE",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20
+  },
+  areaPickerText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#0284C7"
+  },
+  noAlertsCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#ECFDF5",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#A7F3D0"
+  },
+  noAlertsText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#065F46"
+  },
+
+  /* ===== Evidence Upload ===== */
+  evidenceActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4
+  },
+  evidenceActionBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#F0F9FF",
+    borderWidth: 1.5,
+    borderColor: "#BAE6FD",
+    borderRadius: 12,
+    paddingVertical: 12
+  },
+  evidenceActionText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0284C7"
+  },
+  evidenceHint: {
+    fontSize: 11,
+    color: "#94A3B8",
+    marginTop: 6
+  },
+  evidenceUploadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 10
+  },
+  evidenceUploadingText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0284C7"
+  },
+  evidenceThumbsRow: {
+    marginTop: 10
+  },
+  evidenceThumbWrap: {
+    width: 84,
+    height: 84,
+    borderRadius: 12,
+    overflow: "hidden",
+    position: "relative"
+  },
+  evidenceThumb: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: "#E2E8F0"
+  },
+  evidenceVideoBadge: {
+    position: "absolute",
+    left: 6,
+    bottom: 6,
+    backgroundColor: "rgba(15,23,42,0.7)",
+    borderRadius: 6,
+    padding: 3
+  },
+  evidenceRemoveBtn: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    backgroundColor: "#EF4444",
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+
+  /* ===== AI Assistant Screen ===== */
+  aiHeaderCard: {
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 8
+  },
+  aiHeaderIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 18,
+    backgroundColor: "#0284C7",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12
+  },
+  aiHeaderTitle: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#0F172A",
+    textAlign: "center"
+  },
+  aiHeaderSub: {
+    fontSize: 13,
+    color: "#64748B",
+    textAlign: "center",
+    marginTop: 6,
+    lineHeight: 19
+  },
+  aiPrimaryBtn: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 16,
+    overflow: "hidden"
+  },
+  aiPrimaryGradient: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 16
+  },
+  aiPrimaryTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#FFFFFF"
+  },
+  aiPrimarySub: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.9)",
+    marginTop: 2
+  },
+  aiFeatureList: {
+    marginHorizontal: 16,
+    marginTop: 18,
+    gap: 12
+  },
+  aiFeatureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0"
+  },
+  aiFeatureIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  aiFeatureTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0F172A"
+  },
+  aiFeatureDesc: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 2,
+    lineHeight: 17
+  },
+  aiSecondaryBtn: {
+    marginHorizontal: 16,
+    marginTop: 16,
+    backgroundColor: "#E0F2FE",
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: "center"
+  },
+  aiSecondaryBtnText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0284C7"
+  },
+  aiDisclaimer: {
+    fontSize: 11,
+    color: "#94A3B8",
+    textAlign: "center",
+    marginHorizontal: 24,
+    marginTop: 16,
+    marginBottom: 28,
+    lineHeight: 16
+  },
+
+  /* ===== Settings Screen ===== */
+  settingsProfileCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: "#FFFFFF",
+    margin: 16,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E2E8F0"
+  },
+  settingsAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#E2E8F0"
+  },
+  settingsName: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0F172A"
+  },
+  settingsBadge: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0284C7",
+    marginTop: 2
+  },
+  settingsJurisdiction: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 3
+  },
+  settingsSectionTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0F172A",
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 10
+  },
+  settingsLangGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingHorizontal: 16
+  },
+  settingsLangPill: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0"
+  },
+  settingsLangPillActive: {
+    backgroundColor: "#0284C7",
+    borderColor: "#0284C7"
+  },
+  settingsLangText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#475569"
+  },
+  settingsLangTextActive: {
+    color: "#FFFFFF"
+  },
+  settingsRoleRow: {
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 16
+  },
+  settingsRolePill: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 12,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    alignItems: "center"
+  },
+  settingsRolePillActive: {
+    backgroundColor: "#0284C7",
+    borderColor: "#0284C7"
+  },
+  settingsRoleText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#475569"
+  },
+  settingsRoleTextActive: {
+    color: "#FFFFFF"
+  },
+  settingsDashboardBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#0284C7",
+    marginHorizontal: 16,
+    marginTop: 18,
+    borderRadius: 12,
+    paddingVertical: 14
+  },
+  settingsDashboardBtnText: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#FFFFFF"
+  },
+  settingsDisclaimerBox: {
+    flexDirection: "row",
+    gap: 8,
+    backgroundColor: "#F0F9FF",
+    marginHorizontal: 16,
+    marginTop: 18,
+    marginBottom: 28,
+    padding: 12,
+    borderRadius: 12
+  },
+  settingsDisclaimerText: {
+    flex: 1,
+    fontSize: 11,
+    color: "#475569",
+    lineHeight: 16
+  },
+
+  /* ===== Offline / Permission Modals ===== */
+  offlineModalCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    padding: 24,
+    alignItems: "center",
+    width: "100%",
+    maxWidth: 340
+  },
+  offlineModalIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#E0F2FE",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14
+  },
+  offlineModalTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#0F172A",
+    textAlign: "center"
+  },
+  offlineModalText: {
+    fontSize: 13,
+    color: "#64748B",
+    textAlign: "center",
+    marginTop: 8,
+    lineHeight: 19
+  },
+  offlineModalBtn: {
+    backgroundColor: "#0284C7",
+    borderRadius: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 40,
+    alignItems: "center",
+    marginTop: 18,
+    alignSelf: "stretch"
+  },
+  offlineModalBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800"
+  },
+  offlineModalCancelText: {
+    color: "#94A3B8",
+    fontSize: 13,
+    fontWeight: "700",
+    marginTop: 14
+  },
+
+  /* ===== Area Picker Sheet ===== */
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.5)",
+    justifyContent: "flex-end"
+  },
+  areaSheet: {
+    backgroundColor: "#FFFFFF",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#CBD5E1",
+    alignSelf: "center",
+    marginBottom: 16
+  },
+  areaSheetTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#0F172A",
+    marginBottom: 12
+  },
+  areaOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 6
+  },
+  areaOptionActive: {
+    backgroundColor: "#F0F9FF"
+  },
+  areaOptionText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#475569"
+  },
+  areaOptionTextActive: {
+    color: "#0284C7",
+    fontWeight: "800"
   }
 });

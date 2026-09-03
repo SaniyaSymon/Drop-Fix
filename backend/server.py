@@ -7,7 +7,9 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, APIRouter, HTTPException, Query, Body, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Query, Body, BackgroundTasks, UploadFile, File
+from fastapi.responses import Response
+from fastapi.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
@@ -15,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from models import Report, Advisory, IncidentCluster, AuditLog, TimelineEntry
 from services.gemini_service import structure_voice_transcript, generate_officer_ai_summary
+from services.storage_service import init_storage, put_object, get_object, APP_NAME
 from seed_data import get_demo_reports, get_demo_advisories, get_demo_clusters
 
 ROOT_DIR = Path(__file__).parent
@@ -93,6 +96,13 @@ async def startup_db_seed():
     except Exception as e:
         logger.error(f"Error during startup DB check: {e}")
 
+    # Warm up object storage handshake (non-fatal)
+    try:
+        await run_in_threadpool(init_storage)
+        logger.info("DROPFIX object storage initialized.")
+    except Exception as e:
+        logger.error(f"Object storage init failed (uploads may be unavailable): {e}")
+
 # Pydantic Schemas for Requests
 class ReportCreateRequest(BaseModel):
     is_anonymous: bool = True
@@ -167,6 +177,62 @@ async def health_check():
         "supported_languages": ["en", "ta", "te", "kn", "ml"],
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+# ----------------- EVIDENCE MEDIA (Object Storage) -----------------
+
+ALLOWED_MEDIA = {
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/heic": "heic",
+    "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm",
+}
+MAX_MEDIA_BYTES = 25 * 1024 * 1024  # 25 MB cap
+
+
+@api_router.post("/upload")
+async def upload_evidence(file: UploadFile = File(...)):
+    """Upload citizen evidence photo/short video to managed object storage."""
+    content_type = (file.content_type or "application/octet-stream").lower()
+    if content_type not in ALLOWED_MEDIA:
+        raise HTTPException(status_code=400, detail=f"Unsupported media type: {content_type}. Use JPG/PNG/WEBP images or MP4/MOV videos.")
+
+    data = await file.read()
+    if len(data) == 0:
+        raise HTTPException(status_code=400, detail="Empty file.")
+    if len(data) > MAX_MEDIA_BYTES:
+        raise HTTPException(status_code=413, detail="File too large. Max 25 MB per evidence file.")
+
+    ext = ALLOWED_MEDIA[content_type]
+    storage_path = f"{APP_NAME}/uploads/citizen/{uuid.uuid4().hex}.{ext}"
+
+    try:
+        await run_in_threadpool(put_object, storage_path, data, content_type)
+    except Exception as e:
+        logger.error(f"Evidence upload failed: {e}")
+        raise HTTPException(status_code=502, detail="Evidence upload failed. Please try again.")
+
+    is_video = content_type.startswith("video/")
+    return {
+        "success": True,
+        "path": storage_path,
+        "url": f"/api/files/{storage_path}",
+        "content_type": content_type,
+        "is_video": is_video,
+        "size": len(data),
+    }
+
+
+@api_router.get("/files/{path:path}")
+async def get_evidence_file(path: str):
+    """Public read of evidence media (incident evidence is public-facing)."""
+    try:
+        content, content_type = await run_in_threadpool(get_object, path)
+    except Exception as e:
+        logger.warning(f"Evidence fetch failed for {path}: {e}")
+        raise HTTPException(status_code=404, detail="File not found.")
+    return Response(
+        content=content,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 # 1. Reports Endpoints
 @api_router.get("/reports")

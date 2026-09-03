@@ -1,6 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { AppState, AppStateStatus } from "react-native";
+import NetInfo from "@react-native-community/netinfo";
+import { storage } from "@/src/utils/storage";
 
 const EXPO_PUBLIC_BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+const LIVE_POLL_INTERVAL_MS = 20000;
+const OFFLINE_DRAFTS_KEY = "dropfix_offline_drafts";
 
 export interface TimelineEntry {
   step_id: string;
@@ -124,6 +129,9 @@ interface IncidentContextType {
   setSearchQuery: (q: string) => void;
   isLoading: boolean;
   error: string | null;
+  isOnline: boolean;
+  pendingDraftsCount: number;
+  lastLiveUpdate: number | null;
   refreshData: () => Promise<void>;
   createReport: (payload: any) => Promise<ReportItem>;
   trackReport: (report_id: string, tracking_code: string) => Promise<ReportItem>;
@@ -149,6 +157,10 @@ export const IncidentProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [pendingDraftsCount, setPendingDraftsCount] = useState<number>(0);
+  const [lastLiveUpdate, setLastLiveUpdate] = useState<number | null>(null);
+  const isFlushingRef = useRef<boolean>(false);
 
   const fetchReports = useCallback(async () => {
     try {
@@ -224,13 +236,65 @@ export const IncidentProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setError(null);
     await Promise.all([fetchReports(), fetchAdvisories(), fetchClusters(), fetchAnalytics()]);
     setIsLoading(false);
+    setLastLiveUpdate(Date.now());
+  }, [fetchReports, fetchAdvisories, fetchClusters, fetchAnalytics]);
+
+  // Silent background refresh (no loading spinner) — used by live polling.
+  const silentRefresh = useCallback(async () => {
+    await Promise.all([fetchReports(), fetchAdvisories(), fetchClusters(), fetchAnalytics()]);
+    setLastLiveUpdate(Date.now());
   }, [fetchReports, fetchAdvisories, fetchClusters, fetchAnalytics]);
 
   useEffect(() => {
     refreshData();
   }, [refreshData, selectedState, selectedCategory, selectedPriority, selectedStatus, searchQuery]);
 
-  const createReport = async (payload: any): Promise<ReportItem> => {
+  // ---- LIVE MAP/DASHBOARD REFRESH: poll while app is foregrounded ----
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = () => {
+      if (interval) return;
+      interval = setInterval(() => {
+        silentRefresh();
+      }, LIVE_POLL_INTERVAL_MS);
+    };
+    const stopPolling = () => {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+
+    startPolling();
+
+    const sub = AppState.addEventListener("change", (state: AppStateStatus) => {
+      if (state === "active") {
+        silentRefresh();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    });
+
+    return () => {
+      stopPolling();
+      sub.remove();
+    };
+  }, [silentRefresh]);
+
+  // ---- OFFLINE DRAFTS: monitor connectivity & auto-submit queued reports ----
+  const getDrafts = useCallback(async (): Promise<any[]> => {
+    const drafts = await storage.getItem<any[]>(OFFLINE_DRAFTS_KEY, []);
+    return Array.isArray(drafts) ? drafts : [];
+  }, []);
+
+  const persistDrafts = useCallback(async (drafts: any[]) => {
+    await storage.setItem(OFFLINE_DRAFTS_KEY, drafts);
+    setPendingDraftsCount(drafts.length);
+  }, []);
+
+  const postReport = async (payload: any): Promise<ReportItem> => {
     const res = await fetch(`${EXPO_PUBLIC_BACKEND_URL}/api/reports`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -241,8 +305,75 @@ export const IncidentProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       throw new Error(errJson.detail || "Failed to submit report");
     }
     const data = await res.json();
-    await refreshData();
     return data.report;
+  };
+
+  const flushDrafts = useCallback(async () => {
+    if (isFlushingRef.current) return;
+    isFlushingRef.current = true;
+    try {
+      let drafts = await getDrafts();
+      if (drafts.length === 0) return;
+      const remaining: any[] = [];
+      for (const draft of drafts) {
+        try {
+          await postReport(draft.payload);
+        } catch {
+          remaining.push(draft); // keep for next retry
+        }
+      }
+      await persistDrafts(remaining);
+      if (remaining.length < drafts.length) {
+        await refreshData();
+      }
+    } finally {
+      isFlushingRef.current = false;
+    }
+  }, [getDrafts, persistDrafts, refreshData]);
+
+  useEffect(() => {
+    (async () => {
+      const drafts = await getDrafts();
+      setPendingDraftsCount(drafts.length);
+    })();
+
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const online = state.isConnected !== false;
+      setIsOnline(online);
+      if (online) {
+        flushDrafts();
+      }
+    });
+    return () => unsubscribe();
+  }, [getDrafts, flushDrafts]);
+
+  const createReport = async (payload: any): Promise<ReportItem> => {
+    try {
+      const report = await postReport(payload);
+      await refreshData();
+      // Opportunistically flush any older queued drafts too.
+      flushDrafts();
+      return report;
+    } catch (err: any) {
+      // Distinguish a genuine network failure from a server-side rejection.
+      const netState = await NetInfo.fetch().catch(() => null);
+      const offline = netState ? netState.isConnected === false : false;
+      const looksLikeNetworkError =
+        offline ||
+        err?.name === "TypeError" ||
+        /network request failed|failed to fetch|load failed/i.test(err?.message || "");
+
+      if (looksLikeNetworkError) {
+        const drafts = await getDrafts();
+        drafts.push({ id: `draft-${Date.now()}`, payload, savedAt: new Date().toISOString() });
+        await persistDrafts(drafts);
+        setIsOnline(false);
+        const offlineErr: any = new Error("OFFLINE_QUEUED");
+        offlineErr.code = "OFFLINE_QUEUED";
+        throw offlineErr;
+      }
+      throw err;
+    }
   };
 
   const trackReport = async (report_id: string, tracking_code: string): Promise<ReportItem> => {
@@ -330,6 +461,9 @@ export const IncidentProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setSearchQuery,
         isLoading,
         error,
+        isOnline,
+        pendingDraftsCount,
+        lastLiveUpdate,
         refreshData,
         createReport,
         trackReport,

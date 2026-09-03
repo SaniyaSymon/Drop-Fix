@@ -10,7 +10,9 @@
     "safety": "Water Safety",
     "authority": "Authority Desk",
     "admin": "Admin Hub",
-    "guide": "Guide"
+    "guide": "Guide",
+    "ai": "AI Assistant",
+    "settings": "Settings"
   },
   "roles": {
     "citizen": "Citizen",
@@ -30,7 +32,30 @@
     "stats_resolved": "Resolved",
     "stats_in_progress": "In Progress",
     "stats_hotspots": "Active Hotspots",
-    "coverage_states": "Covering Tamil Nadu, Kerala, Karnataka, Andhra Pradesh, Telangana & Puducherry"
+    "coverage_states": "Covering Tamil Nadu, Kerala, Karnataka, Andhra Pradesh, Telangana & Puducherry",
+    "anonymous_secure": "100% Anonymous & Secure",
+    "report_hero_sub": "Discoloured, brown, foul-smelling or leaking water? Log an incident for quick municipal inspection.",
+    "chip_photo": "Photo Evidence",
+    "chip_gps": "Ward GPS",
+    "chip_ai": "AI Priority",
+    "stat_active": "Active",
+    "stat_investigating": "Investigating",
+    "stat_resolved": "Resolved",
+    "stat_alerts": "Alerts",
+    "live_updates": "Live · updates automatically",
+    "quick_services": "Quick Services & Tools",
+    "tool_track_sub": "Track without login",
+    "tool_map_sub": "Clusters & GIS pins",
+    "tool_ai": "AI Assistant",
+    "tool_ai_sub": "Smart triage help",
+    "tool_voice": "Voice Assistant",
+    "tool_voice_sub": "Multilingual voice",
+    "tool_guide": "Smart Navigator",
+    "tool_guide_sub": "Step-by-step guidance",
+    "tool_safety_sub": "Boil orders & tips",
+    "alerts_near_you": "Alerts Near You",
+    "no_alerts_prefix": "No active water advisories in",
+    "choose_area": "Choose your area"
   },
   "report": {
     "title": "Report Water Quality Issue",
@@ -56,7 +81,11 @@
     "anonymous_hint": "Your identity and exact home coordinates will NOT be shown publicly. Only approximate locality is displayed.",
     "reporter_name_label": "Your Name",
     "reporter_contact_label": "Phone / Mobile (For SMS updates)",
-    "attach_photo": "Attach Photo / Video",
+    "attach_photo": "Attach Photo / Video Evidence",
+    "evidence_gallery": "From Gallery",
+    "evidence_camera": "Use Camera",
+    "evidence_hint": "Add up to 4 photos or short videos (max 30s). Helps officers verify before a site visit.",
+    "evidence_uploading": "Uploading evidence securely...",
     "submit_btn": "Submit Incident Report",
     "submitting": "Analyzing with Gemini AI & Submitting...",
     "success_title": "Incident Logged Successfully!",
@@ -162,5 +191,36 @@
     "filtration_title": "Emergency Filtration",
     "filtration_desc": "Use multi-stage sedimentation and activated carbon. Do not consume water with chemical odor even after boiling.",
     "emergency_contacts": "State Municipal Water Helplines"
+  },
+  "offline": {
+    "you_are_offline": "You are offline. Reports will be saved and sent automatically.",
+    "pending_sync": "report(s) waiting to sync",
+    "saved_title": "Saved Offline",
+    "saved_body": "No internet right now. Your report is safely saved and will be submitted automatically once you're back online.",
+    "got_it": "Got It"
+  },
+  "perm": {
+    "title": "Permission Needed",
+    "body": "DROPFIX needs access to your camera and photos to attach water-issue evidence. Please enable it in Settings.",
+    "open_settings": "Open Settings",
+    "not_now": "Not Now"
+  },
+  "ai": {
+    "title": "DROPFIX AI Assistant",
+    "subtitle": "Multilingual smart help to report and understand water issues.",
+    "voice_cta_title": "Speak your complaint",
+    "voice_cta_sub": "Tamil, Telugu, Kannada, Malayalam or English",
+    "feat_triage_title": "Smart Triage",
+    "feat_triage_desc": "Suggests category, priority and a cautious safety tip from your words.",
+    "feat_translate_title": "Auto Translation",
+    "feat_translate_desc": "Converts your report to English for officers, keeping your original text.",
+    "feat_guide_title": "Step-by-step Guide",
+    "feat_guide_desc": "Simple visual help for first-time and low-literacy users.",
+    "open_guide": "Open Smart Navigator Guide",
+    "disclaimer": "AI provides preliminary, cautious assistance only. It never confirms contamination — all reports require field verification."
+  },
+  "settings": {
+    "language": "App Language",
+    "role": "Demo Role"
   }
 }

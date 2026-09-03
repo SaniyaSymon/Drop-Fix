@@ -9,14 +9,24 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.dropfixcitizen.q0mm0g"
+      "bundleIdentifier": "com.emergent.dropfixcitizen.q0mm0g",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Capture photos of water issues as evidence",
+        "NSPhotoLibraryUsageDescription": "Attach water-issue photos and videos to reports",
+        "NSMicrophoneUsageDescription": "Record short video evidence of water issues"
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "package": "com.emergent.dropfixcitizen.q0mm0g"
+      "package": "com.emergent.dropfixcitizen.q0mm0g",
+      "permissions": [
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -38,7 +48,14 @@
       "expo-image",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Attach water-issue photos and videos to reports",
+          "cameraPermission": "Capture photos of water issues as evidence"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
